@@ -10,6 +10,7 @@ import org.springframework.security.config.annotation.method.configuration.Enabl
 @EnableScheduling
 public class LedgerLineApplication {
     public static void main(String[] args) {
+        DatabaseUrlNormalizer.normalize();
         SpringApplication.run(LedgerLineApplication.class, args);
     }
 }

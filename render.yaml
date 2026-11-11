@@ -1,0 +1,57 @@
+databases:
+  - name: ledgerline-db
+    databaseName: ledgerline
+    user: ledgerline_owner
+    plan: free
+
+services:
+  - type: web
+    name: ledgerline-backend
+    runtime: docker
+    dockerfilePath: Dockerfile.backend
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ledgerline-db
+          property: connectionString
+      - key: FLYWAY_URL
+        fromDatabase:
+          name: ledgerline-db
+          property: connectionString
+      - key: FLYWAY_USERNAME
+        fromDatabase:
+          name: ledgerline-db
+          property: user
+      - key: FLYWAY_PASSWORD
+        fromDatabase:
+          name: ledgerline-db
+          property: password
+      - key: JWT_SECRET
+        generateValue: true
+      - key: APP_ENV
+        value: PRODUCTION
+      - key: SPRING_PROFILES_ACTIVE
+        value: production
+      - key: SECURE_COOKIES
+        value: "true"
+      - key: AUTHORISATION_THRESHOLD
+        value: "10000.00"
+      - key: FRONTEND_ORIGIN
+        fromService:
+          type: web
+          name: ledgerline-frontend
+          property: url
+
+  - type: web
+    name: ledgerline-frontend
+    runtime: docker
+    dockerfilePath: Dockerfile.frontend
+    plan: free
+    envVars:
+      - key: BACKEND_URL
+        fromService:
+          type: web
+          name: ledgerline-backend
+          property: url
