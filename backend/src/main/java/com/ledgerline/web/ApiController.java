@@ -11,6 +11,13 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.ZoneOffset;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
@@ -30,6 +37,8 @@ public class ApiController {
     private final LedgerService ledgerService;
     private final AuditService auditService;
     private final PasswordEncoder passwordEncoder;
+    @Value("${ledgerline.environment:DEVELOPMENT}")
+    private String environment;
 
     public ApiController(UserRepository users, AccountRepository accounts, TransactionRepository transactions,
                          AuditEventRepository auditEvents, SecurityEventRepository securityEvents,
@@ -42,7 +51,8 @@ public class ApiController {
 
     @GetMapping("/health")
     public Map<String, String> health() {
-        return Map.of("status", "UP", "authorisation", "UP", "duplicateProtection", "UP");
+        return Map.of("status", "UP", "authorisation", "UP", "duplicateProtection", "UP",
+                "environment", environment);
     }
 
     @GetMapping("/profile")
@@ -91,6 +101,66 @@ public class ApiController {
         return new AccountView(account.getId(), account.getAccountNumber(), account.getBalance(), account.getStatus());
     }
 
+    @PostMapping("/accounts/{id}/freeze")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Transactional
+    public AccountView freezeAccount(@PathVariable Long id, @Valid @RequestBody FreezeAccountRequest request,
+                                     Authentication authentication, HttpServletRequest servletRequest) {
+        Account account = accounts.findLockedById(id).orElseThrow(ApiException::notFound);
+        if (account.isSystem()) throw ApiException.badRequest("The system account cannot be frozen");
+        if (!"FROZEN".equals(account.getStatus())) {
+            account.freeze(request.reason());
+            auditService.record("ACCOUNT_FROZEN", currentUser(authentication),
+                    "Account " + account.getAccountNumber() + " frozen; reason: " + request.reason(),
+                    ip(servletRequest), "SUCCESS");
+        }
+        return new AccountView(account.getId(), account.getAccountNumber(), account.getBalance(), account.getStatus());
+    }
+
+    @PostMapping("/accounts/{id}/unfreeze")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Transactional
+    public AccountView unfreezeAccount(@PathVariable Long id, Authentication authentication,
+                                       HttpServletRequest servletRequest) {
+        Account account = accounts.findLockedById(id).orElseThrow(ApiException::notFound);
+        if (account.isSystem()) throw ApiException.badRequest("The system account cannot be unfrozen");
+        if ("FROZEN".equals(account.getStatus())) {
+            String reason = account.getFrozenReason();
+            account.unfreeze();
+            auditService.record("ACCOUNT_UNFROZEN", currentUser(authentication),
+                    "Account " + account.getAccountNumber() + " unfrozen; prior freeze reason: "
+                            + (reason == null ? "not recorded" : reason),
+                    ip(servletRequest), "SUCCESS");
+        }
+        return new AccountView(account.getId(), account.getAccountNumber(), account.getBalance(), account.getStatus());
+    }
+
+    @GetMapping(value = "/accounts/{id}/statement.csv", produces = "text/csv")
+    @PreAuthorize("hasAnyRole('ADMIN','AUDITOR','AUTHORISER','ACCOUNT_HOLDER')")
+    public ResponseEntity<String> statement(@PathVariable Long id,
+                                            @RequestParam(required = false) LocalDate from,
+                                            @RequestParam(required = false) LocalDate to,
+                                            Authentication authentication) {
+        if (from != null && to != null && from.isAfter(to)) {
+            throw ApiException.badRequest("'from' date must not be after 'to' date");
+        }
+        Account account = accounts.findById(id).orElseThrow(ApiException::notFound);
+        LedgerUser actor = currentUser(authentication);
+        if (account.isSystem()) throw ApiException.notFound();
+        if (actor.getRole() == Role.ACCOUNT_HOLDER
+                && (account.getOwner() == null || !account.getOwner().getId().equals(actor.getId()))) {
+            throw ApiException.forbidden();
+        }
+        var start = from == null ? null : from.atStartOfDay().toInstant(ZoneOffset.UTC);
+        var end = to == null ? null : to.atTime(LocalTime.MAX).toInstant(ZoneOffset.UTC);
+        String body = ledgerService.statementCsv(id, start, end);
+        String filename = "ledgerline-statement-" + account.getAccountNumber() + ".csv";
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .contentType(new MediaType("text", "csv", StandardCharsets.UTF_8))
+                .body(body);
+    }
+
     @PostMapping("/transactions")
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("hasRole('ACCOUNT_HOLDER')")
@@ -135,6 +205,15 @@ public class ApiController {
         return transactionService.decide(id, false, userId(authentication), ip(request));
     }
 
+    @PostMapping("/transactions/{id}/reverse")
+    @ResponseStatus(HttpStatus.CREATED)
+    @PreAuthorize("hasAnyRole('ADMIN','AUTHORISER')")
+    public TransactionView reverse(@PathVariable UUID id, @Valid @RequestBody ReverseTransactionRequest body,
+                                   @RequestHeader(value = "Idempotency-Key", required = false) String key,
+                                   Authentication authentication, HttpServletRequest request) {
+        return transactionService.reverse(id, body, key, userId(authentication), ip(request));
+    }
+
     @GetMapping("/ledger")
     @PreAuthorize("hasAnyRole('ADMIN','AUDITOR','AUTHORISER','ACCOUNT_HOLDER')")
     public List<LedgerView> ledger(Authentication authentication) {
@@ -167,7 +246,7 @@ public class ApiController {
     public List<AuditView> auditLog() {
         return auditEvents.findTop200ByOrderByIdDesc().stream().map(event -> new AuditView(event.getId(),
                 event.getEventType(), event.getDescription(), event.getIpAddress(),
-                event.getStatus(), event.getCreatedAt())).toList();
+                event.getStatus(), event.getCreatedAt(), event.getCorrelationId())).toList();
     }
 
     @GetMapping("/security-events")
@@ -176,7 +255,8 @@ public class ApiController {
         return securityEvents.findTop200ByOrderByCreatedAtDesc().stream().map(event -> Map.<String, Object>of(
                 "id", event.getId(), "eventType", event.getEventType(), "description", event.getDescription(),
                 "ipAddress", event.getIpAddress() == null ? "" : event.getIpAddress(),
-                "status", event.getStatus(), "createdAt", event.getCreatedAt())).toList();
+                "status", event.getStatus(), "createdAt", event.getCreatedAt(),
+                "correlationId", event.getCorrelationId() == null ? "" : event.getCorrelationId())).toList();
     }
 
     @GetMapping("/overview")

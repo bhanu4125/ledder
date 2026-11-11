@@ -19,6 +19,8 @@ public class Account {
     private long version;
     @Column(nullable = false)
     private String status;
+    @Column(name = "frozen_reason", length = 240)
+    private String frozenReason;
     @Column(name = "is_system", nullable = false)
     private boolean system;
     @Column(name = "created_at", nullable = false)
@@ -38,6 +40,9 @@ public class Account {
     public String getAccountNumber() { return accountNumber; }
     public BigDecimal getBalance() { return balance; }
     public String getStatus() { return status; }
+    public String getFrozenReason() { return frozenReason; }
     public boolean isSystem() { return system; }
     public void setBalance(BigDecimal balance) { this.balance = balance; }
+    public void freeze(String reason) { this.status = "FROZEN"; this.frozenReason = reason; }
+    public void unfreeze() { this.status = "ACTIVE"; this.frozenReason = null; }
 }

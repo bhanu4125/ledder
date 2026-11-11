@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ledgerline.domain.*;
 import com.ledgerline.repository.*;
 import com.ledgerline.web.ApiModels.CreateTransactionRequest;
+import com.ledgerline.web.ApiModels.ReverseTransactionRequest;
 import com.ledgerline.web.ApiModels.TransactionView;
 import java.math.BigDecimal;
 import java.util.*;
@@ -130,6 +131,9 @@ public class TransactionService {
             Account sender = transaction.getSender() == null ? null : locked.get(transaction.getSender().getId());
             Account receiver = transaction.getReceiver() == null ? null : locked.get(transaction.getReceiver().getId());
             Account system = systemId == null ? null : existing(locked.get(systemId));
+            if (sender != null) active(sender);
+            if (receiver != null) active(receiver);
+            if (system != null) active(system);
             switch (transaction.getType()) {
                 case "DEPOSIT" -> ledger.postPair(system, receiver, transaction);
                 case "WITHDRAWAL" -> ledger.postPair(sender, system, transaction);
@@ -141,6 +145,54 @@ public class TransactionService {
         audit.record(approve ? "TRANSACTION_APPROVED" : "TRANSACTION_REJECTED", actor,
                 "Transaction " + id + " " + (approve ? "approved" : "rejected"), ip, approve ? "APPROVED" : "REJECTED");
         return view(transaction);
+    }
+
+    @Transactional
+    public TransactionView reverse(UUID id, ReverseTransactionRequest request, String rawKey, Long actorId, String ip) {
+        if (rawKey == null || !rawKey.matches("(?i)[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")) {
+            throw ApiException.badRequest("A valid Idempotency-Key header is required");
+        }
+        String endpoint = "/api/transactions/" + id + "/reverse/" + actorId;
+        lockKey(rawKey + endpoint);
+        String requestHash = Hashing.sha256(id + "|" + request.reason());
+        Optional<IdempotencyRecord> prior = idempotency.findByRequestKeyAndEndpoint(rawKey, endpoint);
+        if (prior.isPresent()) {
+            IdempotencyRecord record = prior.get();
+            if (!Hashing.matches(record.getRequestHash(), requestHash)) {
+                throw ApiException.conflict("Idempotency key was already used with a different request");
+            }
+            try { return objectMapper.readValue(record.getResponseBody(), TransactionView.class); }
+            catch (JsonProcessingException exception) {
+                throw new IllegalStateException("Stored idempotency response is invalid", exception);
+            }
+        }
+
+        FinancialTransaction original = transactions.findLockedById(id).orElseThrow(ApiException::notFound);
+        if (!"COMPLETED".equals(original.getStatus()) || "REVERSAL".equals(original.getType())) {
+            throw ApiException.conflict("Only a completed, unreversed transaction can be reversed");
+        }
+        LedgerUser actor = users.findById(actorId).orElseThrow(ApiException::unauthorized);
+        Map<Long, Account> locked = lockIds(List.of(
+                original.getSender().getId(), original.getReceiver().getId()));
+        Account reversalSender = existing(locked.get(original.getReceiver().getId()));
+        Account reversalReceiver = existing(locked.get(original.getSender().getId()));
+        FinancialTransaction reversal = transactions.saveAndFlush(new FinancialTransaction(
+                "REVERSAL", reversalSender, reversalReceiver, original.getAmount(), "COMPLETED",
+                actorId + ":reversal:" + rawKey, actor, request.reason(), original));
+        ledger.postPair(reversalSender, reversalReceiver, reversal);
+        original.reverse(actor);
+        audit.record("TRANSACTION_REVERSED", actor,
+                "Transaction " + id + " reversed by compensating transaction " + reversal.getId()
+                        + "; reason: " + request.reason(), ip, "REVERSED");
+
+        TransactionView response = view(reversal);
+        try {
+            idempotency.save(new IdempotencyRecord(rawKey, endpoint, requestHash,
+                    objectMapper.writeValueAsString(response), HttpStatus.CREATED.value()));
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Could not encode transaction response", exception);
+        }
+        return response;
     }
 
     @Transactional(readOnly = true)
@@ -157,7 +209,8 @@ public class TransactionService {
                 transaction.getAmount(), transaction.getStatus(), transaction.getMemo(),
                 transaction.getCreatedAt(), transaction.getRequestedBy().getId(),
                 transaction.getDecidedBy() == null ? null : transaction.getDecidedBy().getId(),
-                transaction.getDecidedAt());
+                transaction.getDecidedAt(),
+                transaction.getReversalOf() == null ? null : transaction.getReversalOf().getId());
     }
 
     private Map<Long, Account> lockIds(Collection<Long> ids) {

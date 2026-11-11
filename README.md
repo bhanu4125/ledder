@@ -9,11 +9,16 @@ LedgerLine is a financial-integrity prototype built with Java 21, Spring Boot, P
 - Server-enforced role checks, account ownership checks, a restricted admin user/account API, and an authoriser queue for transactions above the configured threshold.
 - PostgreSQL schema managed by Flyway; account balances have a non-negative database check and an optimistic version column.
 - Serialized account row locking in ascending account-id order; each completed movement updates balances and writes two balanced ledger entries in one database transaction.
+- ADMIN/AUTHORISER compensating reversals create a new linked transaction and opposite ledger entries; original ledger rows are never edited.
+- ADMIN account freeze/unfreeze controls require a reason and append an audit event; frozen accounts reject new movements and pending settlements.
 - Required idempotency keys, request-body conflict detection, and stored responses written atomically with the transaction.
+- Date-filterable, ownership-scoped account statement downloads in CSV format.
 - SHA-256 hash chains for ledger and audit rows, a live ledger verification API, a periodic verifier, and an admin/auditor verification action.
+- Request correlation UUIDs are validated or generated, included in response headers, error bodies, logs, audit/security records, and the audit-row hash.
 - Docker deployment with a dedicated runtime database role. That role has SELECT/INSERT but no UPDATE/DELETE on ledger and audit tables; the migration owner and runtime credentials are separate.
 - React pages for overview, accounts, transaction history/creation, ledger verification, authorisation, audit/security events, and admin user/account management.
 - OpenAPI documentation at `/swagger-ui.html`.
+- GitHub Actions CI runs backend tests, frontend build, and the production dependency advisory scan on pushes and pull requests.
 
 The UI shows the latest 100 transactions and 200 ledger/audit rows exposed by the API. Search, date filters, sorting, and pagination are client-side over those returned rows. The overview chart is drawn from actual recent transaction amounts; it is not historical aggregate reporting.
 
@@ -32,7 +37,7 @@ Open [http://localhost](http://localhost). The frontend proxies API and Swagger 
 
 PostgreSQL initialization creates `ledgerline_owner` (schema/migration owner) and `ledgerline_runtime` (application role). Flyway connects as the owner; Hibernate connects as the restricted runtime role. The initialisation script only runs on a fresh PostgreSQL data volume. If you change database passwords after the volume has been created, recreate that volume intentionally before restarting; this removes its database contents.
 
-For a TLS deployment, terminate HTTPS at a trusted reverse proxy, set `SECURE_COOKIES=true`, set `FRONTEND_ORIGIN` to the exact HTTPS origin, use unique long database passwords and a random JWT secret, and do not expose PostgreSQL or the backend port publicly. The included Compose file is a local demo deployment, not a hardened public-internet deployment.
+The local Compose stack is marked `DEMO` in the UI and keeps Swagger available for exploration. For a TLS deployment, set `SPRING_PROFILES_ACTIVE=production`, terminate HTTPS at a trusted reverse proxy, set `FRONTEND_ORIGIN` to the exact HTTPS origin, use unique long database passwords and a random JWT secret, and do not expose PostgreSQL or the backend port publicly. The production profile disables Swagger/OpenAPI, suppresses verbose server errors, disables SQL logging, and enables secure refresh cookies. Do not override `SECURE_COOKIES=true` in production. The included Compose file is a local demo deployment, not a hardened public-internet deployment.
 
 ## Demo credentials
 
@@ -87,9 +92,14 @@ Each money movement has a transaction row and exactly two ledger entries: one de
 - Frontend production build: `npm run build`.
 - Database-level append-only check against a running Compose stack: `.\scripts\check-append-only.ps1`.
 - The integration suite includes ownership/role denial, JWT tampering/expiry, validation failures, idempotency/body conflict (including concurrent replay), a 50-request withdrawal race, lockout, ledger invariants, direct ledger-row tampering, and database append-only privilege checks. It requires Testcontainers/Docker to execute.
+- Additional integration tests cover compensating reversals, account freeze enforcement, CSV ownership boundaries, correlation ID persistence, and mass-assignment attempts.
+- CI is configured in `.github/workflows/ci.yml`; frontend supply-chain checks currently run `npm audit --omit=dev`.
+- Local verification for the expanded features: the live Compose API successfully reversed and replayed a transfer, rejected a withdrawal from a frozen account, enforced statement IDOR with 403, returned a CSV statement, persisted the request correlation ID, and verified the resulting ledger. A separate production-profile probe reported `PRODUCTION`, returned 404 for Swagger, and set `Secure`, `HttpOnly`, `SameSite=Strict` refresh-cookie attributes.
+- On this Windows setup, `mvn test` passes its 2 unit tests but skips all 13 Testcontainers integration tests because Testcontainers' named-pipe Docker discovery fails, even though Compose is running. The CI workflow is configured but was not run on GitHub in this session.
 - Rate limiting and account lockout counters are process-local. They are suitable for a single-instance prototype, not a horizontally scaled service.
 - The runtime DB restrictions are configured by the Compose PostgreSQL init script and Flyway migration. They are not applied automatically to an arbitrary pre-existing database or a local schema-owner connection.
 - Audit-chain verification and exhaustive SQL injection/XSS/CSRF browser tests are not yet implemented. `THREATS.md` identifies those gaps. The DB-level integration test checks runtime-role grants; the separate Compose script attempts actual UPDATE/DELETE statements.
-- A new account starts at zero; there is no real payment rail, account statement export, account freeze workflow, reversal workflow, email verification, password reset, MFA, or production secrets-management integration.
+- A new account starts at zero; there is no real payment rail, email verification, password reset, MFA, or production secrets-management integration.
 - Refresh cookies use `SECURE_COOKIES=false` in local Compose so HTTP localhost works. HTTPS deployments must set it to `true`.
 - Access-token role claims remain valid until token expiry after an admin changes a user's role (maximum 15 minutes).
+- Security-event rows carry correlation IDs but are not part of the protected, hash-chained `audit_log`; audit-chain verification is also not implemented. See `THREATS.md`.

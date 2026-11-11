@@ -25,12 +25,12 @@ public final class ApiModels {
     public record TransactionView(UUID id, String type, Long senderAccountId, Long receiverAccountId,
                                   BigDecimal amount, String status, String memo,
                                   Instant createdAt, Long requestedByUserId,
-                                  Long decidedByUserId, Instant decidedAt) {}
+                                  Long decidedByUserId, Instant decidedAt, UUID reversalOfTransactionId) {}
     public record AccountView(Long id, String accountNumber, BigDecimal balance, String status) {}
     public record LedgerView(Long id, Long accountId, UUID transactionId, String entryType, BigDecimal amount,
                              BigDecimal runningBalance, String entryHash, Instant createdAt) {}
     public record AuditView(Long id, String eventType, String description, String ipAddress,
-                            String status, Instant createdAt) {}
+                            String status, Instant createdAt, String correlationId) {}
     public record VerifyResult(String status, long checkedRows, String lastHash, Long brokenRowId,
                                Instant verifiedAt) {}
     public record Overview(long totalTransactions, long successfulTransactions, long failedTransactions,
@@ -40,6 +40,8 @@ public final class ApiModels {
                                     @NotBlank @Pattern(regexp = "ADMIN|AUTHORISER|ACCOUNT_HOLDER|AUDITOR") String role) {}
     public record RoleUpdateRequest(@NotBlank @Pattern(regexp = "ADMIN|AUTHORISER|ACCOUNT_HOLDER|AUDITOR") String role) {}
     public record CreateAccountRequest(@NotNull Long ownerUserId) {}
+    public record FreezeAccountRequest(@NotBlank @Size(max = 240) String reason) {}
+    public record ReverseTransactionRequest(@NotBlank @Size(max = 140) String reason) {}
     public record Message(String message) {}
-    public record ErrorBody(String code, String message, Instant timestamp) {}
+    public record ErrorBody(String code, String message, Instant timestamp, String correlationId) {}
 }

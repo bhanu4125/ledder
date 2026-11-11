@@ -12,6 +12,8 @@ import java.time.temporal.ChronoUnit;
 import java.math.RoundingMode;
 import java.sql.Timestamp;
 import java.util.List;
+import java.time.Instant;
+import java.time.format.DateTimeFormatter;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -82,6 +84,33 @@ public class LedgerService {
         return rows.stream().map(row -> new LedgerView(row.getId(), row.getAccount().getId(),
                 row.getTransaction().getId(), row.getEntryType(), row.getAmount(),
                 row.getRunningBalance(), row.getEntryHash(), row.getCreatedAt())).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public String statementCsv(Long accountId, Instant fromInclusive, Instant toExclusive) {
+        StringBuilder csv = new StringBuilder(
+                "entry_id,transaction_id,entry_type,amount,running_balance,created_at,entry_hash\r\n");
+        List<LedgerEntry> rows;
+        if (fromInclusive != null && toExclusive != null) {
+            rows = ledgerEntries.findByAccount_IdAndCreatedAtGreaterThanEqualAndCreatedAtLessThanOrderById(
+                    accountId, fromInclusive, toExclusive);
+        } else if (fromInclusive != null) {
+            rows = ledgerEntries.findByAccount_IdAndCreatedAtGreaterThanEqualOrderById(accountId, fromInclusive);
+        } else if (toExclusive != null) {
+            rows = ledgerEntries.findByAccount_IdAndCreatedAtLessThanOrderById(accountId, toExclusive);
+        } else {
+            rows = ledgerEntries.findByAccount_IdOrderById(accountId);
+        }
+        for (LedgerEntry entry : rows) {
+            csv.append(entry.getId()).append(',')
+                    .append(entry.getTransaction().getId()).append(',')
+                    .append(entry.getEntryType()).append(',')
+                    .append(entry.getAmount().toPlainString()).append(',')
+                    .append(entry.getRunningBalance().toPlainString()).append(',')
+                    .append(DateTimeFormatter.ISO_INSTANT.format(entry.getCreatedAt())).append(',')
+                    .append(entry.getEntryHash()).append("\r\n");
+        }
+        return csv.toString();
     }
 
     private List<LedgerEntry> ownedEntries(Long ownerId) {

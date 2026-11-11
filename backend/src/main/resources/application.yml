@@ -36,6 +36,10 @@ ledgerline:
   frontend-origin: ${FRONTEND_ORIGIN:http://localhost:5173}
   secure-cookies: ${SECURE_COOKIES:false}
   authorisation-threshold: ${AUTHORISATION_THRESHOLD:10000.00}
+  environment: ${APP_ENV:DEVELOPMENT}
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%X{correlationId:-}] %logger{36} - %msg%n"

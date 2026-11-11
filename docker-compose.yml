@@ -29,8 +29,8 @@ services:
       FLYWAY_PASSWORD: ${DATABASE_OWNER_PASSWORD:-owner-local-dev-only}
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost}
-      SECURE_COOKIES: ${SECURE_COOKIES:-false}
       AUTHORISATION_THRESHOLD: ${AUTHORISATION_THRESHOLD:-10000.00}
+      APP_ENV: DEMO
     depends_on:
       db:
         condition: service_healthy

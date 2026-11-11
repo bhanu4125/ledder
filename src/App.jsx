@@ -17,8 +17,17 @@ function App() {
   const [session, setSession] = useState(null)
   const [initializing, setInitializing] = useState(true)
   const [authError, setAuthError] = useState('')
+  const [runtimeEnvironment, setRuntimeEnvironment] = useState('UNKNOWN')
   const location = useLocation()
   const navigate = useNavigate()
+
+  useEffect(() => {
+    let active = true
+    fetch('/api/health').then((response) => response.ok ? response.json() : null)
+      .then((health) => { if (active && health?.environment) setRuntimeEnvironment(health.environment) })
+      .catch(() => { if (active) setRuntimeEnvironment('UNAVAILABLE') })
+    return () => { active = false }
+  }, [])
 
   const refresh = useCallback(async () => {
     const response = await fetch('/api/auth/refresh', { method: 'POST', credentials: 'include' })
@@ -36,6 +45,7 @@ function App() {
 
   const request = useCallback(async (path, options = {}, retried = false) => {
     const headers = new Headers(options.headers || {})
+    if (!headers.has('X-Correlation-ID')) headers.set('X-Correlation-ID', crypto.randomUUID())
     if (session?.accessToken) headers.set('Authorization', `Bearer ${session.accessToken}`)
     if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
     let response = await fetch(path, { ...options, headers, credentials: 'include' })
@@ -44,6 +54,7 @@ function App() {
         const renewed = await refresh()
         setSession(renewed)
         const retryHeaders = new Headers(options.headers || {})
+        retryHeaders.set('X-Correlation-ID', headers.get('X-Correlation-ID'))
         retryHeaders.set('Authorization', `Bearer ${renewed.accessToken}`)
         if (options.body) retryHeaders.set('Content-Type', 'application/json')
         response = await fetch(path, { ...options, headers: retryHeaders, credentials: 'include' })
@@ -55,9 +66,11 @@ function App() {
     if (!response.ok) {
       let payload = {}
       try { payload = await response.json() } catch { /* Response may be empty. */ }
-      throw new Error(payload.message || `Request failed (${response.status})`)
+      const correlation = payload.correlationId ? ` (reference ${payload.correlationId})` : ''
+      throw new Error(`${payload.message || `Request failed (${response.status})`}${correlation}`)
     }
     if (response.status === 204) return null
+    if (response.headers.get('Content-Type')?.startsWith('text/csv')) return response.blob()
     return response.json()
   }, [refresh, session])
 
@@ -141,7 +154,7 @@ function App() {
         </aside>
         <main className="main-content">
           <header className="topbar"><div className="breadcrumb">LedgerLine <span>/</span> {allowed.find((item) => item.path === location.pathname)?.label || 'Page'}</div>
-            <div className="topbar-right"><span className="live-dot" /> API connected <span className="topbar-divider" /> <span className="date-label">{new Date().toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</span></div>
+            <div className="topbar-right"><span className="badge gray">{runtimeEnvironment}</span><span className="live-dot" /> API connected <span className="topbar-divider" /> <span className="date-label">{new Date().toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</span></div>
           </header>
           <div className="page-wrap">
             <Routes>
@@ -318,7 +331,7 @@ function TransactionTable({ rows, compact = false, onSelect, sortBy, sortDir, on
 }
 
 function Transactions() {
-  const { request } = useApi()
+  const { request, session } = useApi()
   const { data: allRows, error, loading, reload, setData } = useResource('/api/transactions')
   const { data: accounts, error: accountsError } = useResource('/api/accounts')
   const [search, setSearch] = useState('')
@@ -333,9 +346,10 @@ function Transactions() {
   const [notice, setNotice] = useState('')
   const [formError, setFormError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [reverseReason, setReverseReason] = useState('')
+  const [reverseFailure, setReverseFailure] = useState('')
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID())
   const [form, setForm] = useState({ type: 'TRANSFER', senderAccountId: '', receiverAccountId: '', amount: '', memo: '' })
-  const { session } = useApi()
   const holder = session.user?.role === 'ACCOUNT_HOLDER'
   const filtered = (allRows || []).filter((row) => (!search || row.id.toLowerCase().includes(search.toLowerCase()))
     && (!status || row.status === status) && (!type || row.type === type)
@@ -355,6 +369,20 @@ function Transactions() {
     try {
       if (!/^(?:\d{1,17})(?:\.\d{1,2})?$/.test(form.amount) || Number(form.amount) <= 0) {
         throw new Error('Enter a positive amount with no more than two decimal places.')
+      }
+      async function reverseTransaction() {
+        setReverseFailure('')
+        try {
+          const reversed = await request(`/api/transactions/${selected.id}/reverse`, {
+            method: 'POST',
+            headers: { 'Idempotency-Key': crypto.randomUUID() },
+            body: JSON.stringify({ reason: reverseReason }),
+          })
+          setData([reversed, ...(allRows || [])].map((row) =>
+            row.id === selected.id ? { ...row, status: 'REVERSED' } : row))
+          setSelected(reversed)
+          setReverseReason('')
+        } catch (failure) { setReverseFailure(failure.message) }
       }
       const body = { type: form.type, amount: form.amount, memo: form.memo }
       if (form.type !== 'DEPOSIT') body.senderAccountId = Number(form.senderAccountId)
@@ -388,7 +416,7 @@ function Transactions() {
     <Panel title="All transactions" subtitle={`${filtered.length} recorded movements`}>
       <div className="filters"><label className="search-field"><span>⌕</span><input value={search} onChange={(event) => { setSearch(event.target.value); setPage(0) }} placeholder="Search by transaction ID" /></label>
         <select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All statuses</option>{['COMPLETED', 'PENDING', 'REJECTED', 'FAILED'].map((value) => <option key={value}>{value}</option>)}</select>
-        <select value={type} onChange={(event) => setType(event.target.value)}><option value="">All types</option>{['DEPOSIT', 'WITHDRAWAL', 'TRANSFER'].map((value) => <option key={value}>{value}</option>)}</select>
+        <select value={type} onChange={(event) => setType(event.target.value)}><option value="">All types</option>{['DEPOSIT', 'WITHDRAWAL', 'TRANSFER', 'REVERSAL'].map((value) => <option key={value}>{value}</option>)}</select>
         <input aria-label="From date" type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} />
         <input aria-label="To date" type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} />
       </div>
@@ -398,6 +426,15 @@ function Transactions() {
     {selected && <div className="drawer-backdrop" onClick={() => setSelected(null)}><aside className="details-drawer" onClick={(event) => event.stopPropagation()}>
       <div className="drawer-head"><div><div className="eyebrow">TRANSACTION DETAILS</div><h2>Movement record</h2></div><button className="icon-button" onClick={() => setSelected(null)}>×</button></div>
       <dl className="detail-list">{Object.entries({ ID: selected.id, Type: selected.type, Status: selected.status, Amount: formatMoney(selected.amount), Source: selected.senderAccountId || 'System float', Destination: selected.receiverAccountId || 'System float', Memo: selected.memo || '—', Created: formatDate(selected.createdAt) }).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{value}</dd></div>)}</dl>
+      {selected.reversalOfTransactionId && <p className="cell-sub">Compensates transaction {selected.reversalOfTransactionId}</p>}
+      {['ADMIN', 'AUTHORISER'].includes(session.user?.role) && selected.status === 'COMPLETED'
+        && selected.type !== 'REVERSAL' && <div className="reverse-form">
+          {reverseFailure && <div className="inline-error">{reverseFailure}</div>}
+          <label>Reversal reason<input required maxLength="140" value={reverseReason}
+            onChange={(event) => setReverseReason(event.target.value)} /></label>
+          <button className="small-button reject-button" disabled={!reverseReason.trim()}
+            onClick={reverseTransaction}>Create compensating reversal</button>
+        </div>}
     </aside></div>}
   </div>
 }
@@ -405,14 +442,35 @@ function Transactions() {
 function Ledger() {
   const { data, error, loading, reload } = useResource('/api/ledger')
   const { request, session } = useApi()
+  const { data: accounts, error: accountError } = useResource('/api/accounts')
   const [result, setResult] = useState(null)
   const [failure, setFailure] = useState('')
   const [checking, setChecking] = useState(false)
+  const [accountId, setAccountId] = useState('')
+  const [fromDate, setFromDate] = useState('')
+  const [toDate, setToDate] = useState('')
   async function verify() {
     setChecking(true); setFailure('')
     try { setResult(await request('/api/ledger/verify', { method: 'POST' })) }
     catch (err) { setFailure(err.message) }
     finally { setChecking(false) }
+  }
+  async function downloadStatement() {
+    setFailure('')
+    try {
+      const query = new URLSearchParams()
+      if (fromDate) query.set('from', fromDate)
+      if (toDate) query.set('to', toDate)
+      const queryString = query.toString()
+      const suffix = queryString ? `?${queryString}` : ''
+      const blob = await request(`/api/accounts/${accountId}/statement.csv${suffix}`)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `ledgerline-statement-${accountId}.csv`
+      link.click()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch (err) { setFailure(err.message) }
   }
   return <div className="page-stack">
     <PageTitle eyebrow="RECORDS" title="Ledger" description="Debit and credit entries with running balances and a verifiable hash chain."
@@ -422,6 +480,23 @@ function Ledger() {
       <span className="verification-symbol">{result.status === 'VERIFIED' ? '✓' : '!'}</span><div><strong>{result.status === 'VERIFIED' ? 'Ledger verified' : `Integrity issue at row ${result.brokenRowId}`}</strong>
         <p>{result.checkedRows} entries checked · {formatDate(result.verifiedAt)}</p><code>{result.lastHash}</code></div><Badge value={result.status} /></div>}
     <Panel title="Ledger entries" subtitle={`${data?.length || 0} most recent entries`}>
+      <div className="filters statement-filters">
+        {accountError ? <span className="inline-error">{accountError}</span>
+          : <select aria-label="Statement account" required value={accountId}
+            onChange={(event) => setAccountId(event.target.value)}>
+            <option value="">Select account for CSV statement</option>
+            {(accounts || []).map((account) => <option key={account.id} value={account.id}>
+              {account.accountNumber}
+            </option>)}
+          </select>}
+        <input aria-label="Statement from date" type="date" value={fromDate}
+          onChange={(event) => setFromDate(event.target.value)} />
+        <input aria-label="Statement to date" type="date" value={toDate}
+          onChange={(event) => setToDate(event.target.value)} />
+        <button className="small-button" disabled={!accountId} onClick={downloadStatement}>
+          Download CSV statement
+        </button>
+      </div>
       {error ? <ErrorState message={error} retry={reload} /> : loading ? <LoadingRows /> : data?.length ? <div className="table-scroll"><table><thead><tr><th>Entry</th><th>Account</th><th>Transaction</th><th>Direction</th><th>Amount</th><th>Running balance</th><th>Recorded</th></tr></thead>
         <tbody>{data.map((row) => <tr key={row.id}><td className="mono">#{row.id}</td><td className="mono">{row.accountId}</td><td className="mono">{row.transactionId.slice(0, 12)}</td><td><Badge value={row.entryType} /></td><td>{formatMoney(row.amount)}</td><td className="money-cell">{formatMoney(row.runningBalance)}</td><td>{formatDate(row.createdAt)}</td></tr>)}</tbody></table></div>
         : <EmptyState title="No ledger entries" message="Recorded money movements will appear here." />}
@@ -463,6 +538,7 @@ function Authorisation() {
 }
 
 function Audit() {
+  const { session } = useApi()
   const { data: audit, error: auditError, loading: auditLoading, reload: reloadAudit } = useResource('/api/audit')
   const { data: security, error: securityError, loading: securityLoading, reload: reloadSecurity } = useResource('/api/security-events')
   const failed = auditError || securityError
@@ -472,13 +548,51 @@ function Audit() {
   return <div className="page-stack">
     <PageTitle eyebrow="GOVERNANCE" title="Audit & security" description="Timestamped audit entries and authentication/security signals." />
     <div className="audit-summary"><div><span>Audit history</span><strong>{audit?.length ?? '—'}</strong></div><div><span>Security events</span><strong>{security?.length ?? '—'}</strong></div><div><span>Audit chain</span><strong className="chain-word">Hash chained</strong></div></div>
+    {session.user?.role === 'ADMIN' && <AccountSecurityControls />}
     <Panel title="Event history" subtitle="Most recent audit and security events">
-      {failed ? <ErrorState message={failed} retry={() => { reloadAudit(); reloadSecurity() }} /> : loading ? <LoadingRows /> : rows.length ? <div className="table-scroll"><table><thead><tr><th>Event</th><th>Source</th><th>Description</th><th>Status</th><th>IP address</th><th>Timestamp</th></tr></thead>
-        <tbody>{rows.map((row) => <tr key={`${row.source}-${row.id}`}><td className="mono">{row.eventType}</td><td>{row.source}</td><td className="description-cell">{row.description}</td><td><Badge value={row.status} /></td><td className="mono">{row.ipAddress || '—'}</td><td>{formatDate(row.createdAt)}</td></tr>)}</tbody></table></div>
+      {failed ? <ErrorState message={failed} retry={() => { reloadAudit(); reloadSecurity() }} /> : loading ? <LoadingRows /> : rows.length ? <div className="table-scroll"><table><thead><tr><th>Event</th><th>Source</th><th>Description</th><th>Status</th><th>Correlation ID</th><th>IP address</th><th>Timestamp</th></tr></thead>
+        <tbody>{rows.map((row) => <tr key={`${row.source}-${row.id}`}><td className="mono">{row.eventType}</td><td>{row.source}</td><td className="description-cell">{row.description}</td><td><Badge value={row.status} /></td><td className="mono">{row.correlationId || '—'}</td><td className="mono">{row.ipAddress || '—'}</td><td>{formatDate(row.createdAt)}</td></tr>)}</tbody></table></div>
         : <EmptyState title="No events recorded" message="Security and audit events will appear here as activity occurs." />}
     </Panel>
     <div className="notice-card"><span>i</span><p>*The app writes a SHA-256 chain for audit records. Database-level update/delete restrictions require a separately provisioned runtime DB role; see THREATS.md.</p></div>
   </div>
+}
+
+function AccountSecurityControls() {
+  const { request } = useApi()
+  const { data: accounts, error, loading, reload, setData } = useResource('/api/accounts')
+  const [failure, setFailure] = useState('')
+  const [notice, setNotice] = useState('')
+  async function changeFreeze(account) {
+    let reason
+    if (account.status !== 'FROZEN') {
+      reason = window.prompt(`Why are you freezing ${account.accountNumber}?`)
+      if (reason === null) return
+      if (!reason.trim()) { setFailure('A reason is required to freeze an account.'); return }
+    }
+    setFailure(''); setNotice('')
+    try {
+      const updated = await request(`/api/accounts/${account.id}/${account.status === 'FROZEN' ? 'unfreeze' : 'freeze'}`, {
+        method: 'POST',
+        body: JSON.stringify(account.status === 'FROZEN' ? {} : { reason: reason.trim() }),
+      })
+      setData((accounts || []).map((item) => item.id === account.id ? updated : item))
+      setNotice(`Account ${account.accountNumber} is ${updated.status.toLowerCase()}.`)
+    } catch (err) { setFailure(err.message) }
+  }
+  return <Panel title="Account response controls" subtitle="Freeze a suspected compromised account; history remains visible.">
+    {failure && <div className="inline-error">{failure}</div>}
+    {notice && <div className="inline-success">{notice}</div>}
+    {error ? <ErrorState message={error} retry={reload} /> : loading ? <LoadingRows count={1} />
+      : <div className="user-list account-admin-list">{(accounts || []).map((account) =>
+        <div className="user-row" key={account.id}>
+          <div><strong>{account.accountNumber}</strong><small>{formatMoney(account.balance)}</small></div>
+          <Badge value={account.status} />
+          <button className="small-button" onClick={() => changeFreeze(account)}>
+            {account.status === 'FROZEN' ? 'Unfreeze' : 'Freeze'}
+          </button>
+        </div>)}</div>}
+  </Panel>
 }
 
 function Settings() {

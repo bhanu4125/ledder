@@ -263,6 +263,104 @@ class LedgerLineIntegrationTest {
 
     @Test
     @Order(10)
+    void accountCreationDtoIgnoresMassAssignmentFields() throws Exception {
+        String admin = token("admin@ledgerline.demo", "LedgerLine-Admin-2026!");
+        long ownerId = users.findByEmailIgnoreCase("holder@ledgerline.demo").orElseThrow().getId();
+        String malicious = mapper.createObjectNode().put("ownerUserId", ownerId)
+                .put("balance", "999999.00").put("status", "FROZEN").put("system", true).toString();
+        ResponseEntity<String> created = send("/api/accounts", "POST", malicious, admin, null);
+        assertEquals(HttpStatus.CREATED, created.getStatusCode());
+        long id = mapper.readTree(created.getBody()).get("id").asLong();
+        var account = accounts.findById(id).orElseThrow();
+        assertEquals(0, account.getBalance().compareTo(java.math.BigDecimal.ZERO));
+        assertFalse(account.isSystem());
+        assertEquals("ACTIVE", account.getStatus());
+    }
+
+    @Test
+    @Order(11)
+    void accountFreezeBlocksTransactionsAndStatementExportIsOwnershipScoped() throws Exception {
+        String admin = token("admin@ledgerline.demo", "LedgerLine-Admin-2026!");
+        String holder = token("holder2@ledgerline.demo", "LedgerLine-Holder2-2026!");
+        long accountId = accounts.findByOwnerIdOrderById(
+                users.findByEmailIgnoreCase("holder2@ledgerline.demo").orElseThrow().getId()).get(0).getId();
+        String correlationId = UUID.randomUUID().toString();
+        HttpHeaders freezeHeaders = jsonHeaders(admin, null);
+        freezeHeaders.set("X-Correlation-ID", correlationId);
+        ResponseEntity<String> frozen = rest.exchange(url("/api/accounts/" + accountId + "/freeze"),
+                HttpMethod.POST, new HttpEntity<>(Map.of("reason", "suspected credential compromise"), freezeHeaders),
+                String.class);
+        assertEquals(HttpStatus.OK, frozen.getStatusCode());
+        assertEquals(correlationId, frozen.getHeaders().getFirst("X-Correlation-ID"));
+        assertEquals(correlationId, jdbc.queryForObject(
+                "SELECT correlation_id FROM audit_log WHERE event_type = 'ACCOUNT_FROZEN' ORDER BY id DESC LIMIT 1",
+                String.class));
+
+        String withdrawal = mapper.createObjectNode().put("type", "WITHDRAWAL")
+                .put("senderAccountId", accountId).put("amount", "1.00").toString();
+        assertEquals(HttpStatus.CONFLICT, send("/api/transactions", "POST", withdrawal, holder,
+                UUID.randomUUID().toString()).getStatusCode());
+        assertEquals(HttpStatus.FORBIDDEN,
+                send("/api/accounts/" + accountId + "/freeze", "POST",
+                        "{\"reason\":\"not an administrator\"}", holder, null).getStatusCode());
+
+        assertEquals(HttpStatus.OK, rest.exchange(url("/api/accounts/" + accountId + "/unfreeze"),
+                HttpMethod.POST, new HttpEntity<>("{}", jsonHeaders(admin, null)), String.class).getStatusCode());
+        ResponseEntity<String> statement = rest.exchange(url("/api/accounts/" + accountId + "/statement.csv"),
+                HttpMethod.GET, new HttpEntity<>(jsonHeaders(holder, null)), String.class);
+        assertEquals(HttpStatus.OK, statement.getStatusCode());
+        assertTrue(statement.getHeaders().getContentType().toString().startsWith("text/csv"));
+        assertTrue(statement.getBody().startsWith("entry_id,transaction_id,entry_type"));
+
+        String otherHolder = token("holder@ledgerline.demo", "LedgerLine-Holder-2026!");
+        long otherAccountId = accounts.findByOwnerIdOrderById(
+                users.findByEmailIgnoreCase("holder@ledgerline.demo").orElseThrow().getId()).get(0).getId();
+        assertEquals(HttpStatus.FORBIDDEN, rest.exchange(
+                url("/api/accounts/" + otherAccountId + "/statement.csv"), HttpMethod.GET,
+                new HttpEntity<>(jsonHeaders(holder, null)), String.class).getStatusCode());
+    }
+
+    @Test
+    @Order(12)
+    void reversalCreatesBalancedCompensatingTransactionAndIsIdempotent() throws Exception {
+        String holder = token("holder@ledgerline.demo", "LedgerLine-Holder-2026!");
+        long source = accounts.findByOwnerIdOrderById(
+                users.findByEmailIgnoreCase("holder@ledgerline.demo").orElseThrow().getId()).get(0).getId();
+        long target = accounts.findByOwnerIdOrderById(
+                users.findByEmailIgnoreCase("holder2@ledgerline.demo").orElseThrow().getId()).get(0).getId();
+        String transfer = mapper.createObjectNode().put("type", "TRANSFER")
+                .put("senderAccountId", source).put("receiverAccountId", target).put("amount", "1.00").toString();
+        ResponseEntity<String> created = send("/api/transactions", "POST", transfer, holder,
+                UUID.randomUUID().toString());
+        assertEquals(HttpStatus.CREATED, created.getStatusCode());
+        UUID originalId = UUID.fromString(mapper.readTree(created.getBody()).get("id").asText());
+
+        String authoriser = token("authoriser@ledgerline.demo", "LedgerLine-Approve-2026!");
+        String reason = "{\"reason\":\"correction requested by customer\"}";
+        String key = UUID.randomUUID().toString();
+        long before = ledgerEntries.count();
+        ResponseEntity<String> reversed = send("/api/transactions/" + originalId + "/reverse",
+                "POST", reason, authoriser, key);
+        assertEquals(HttpStatus.CREATED, reversed.getStatusCode(), reversed.getBody());
+        JsonNode reversal = mapper.readTree(reversed.getBody());
+        assertEquals("REVERSAL", reversal.get("type").asText());
+        assertEquals(originalId.toString(), reversal.get("reversalOfTransactionId").asText());
+        assertEquals("REVERSED", jdbc.queryForObject(
+                "SELECT status FROM transactions WHERE id = ?", String.class, originalId));
+        assertEquals(before + 2, ledgerEntries.count());
+
+        ResponseEntity<String> replay = send("/api/transactions/" + originalId + "/reverse",
+                "POST", reason, authoriser, key);
+        assertEquals(reversed.getBody(), replay.getBody());
+        assertEquals(HttpStatus.CONFLICT, send("/api/transactions/" + originalId + "/reverse",
+                "POST", reason, authoriser, UUID.randomUUID().toString()).getStatusCode());
+        String auditor = token("auditor@ledgerline.demo", "LedgerLine-Audit-2026!");
+        assertEquals(HttpStatus.FORBIDDEN, send("/api/transactions/" + originalId + "/reverse",
+                "POST", reason, auditor, UUID.randomUUID().toString()).getStatusCode());
+    }
+
+    @Test
+    @Order(13)
     void tamperingWithHistoricalLedgerDataReportsTheFirstBrokenRow() throws Exception {
         Long firstId = jdbc.queryForObject("SELECT id FROM ledger_entries ORDER BY id LIMIT 1", Long.class);
         assertNotNull(firstId);

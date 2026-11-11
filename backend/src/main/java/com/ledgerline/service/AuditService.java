@@ -6,6 +6,7 @@ import com.ledgerline.repository.AuditEventRepository;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.sql.Timestamp;
+import org.slf4j.MDC;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.stereotype.Service;
@@ -28,15 +29,18 @@ public class AuditService {
                 .map(AuditEvent::getEntryHash).orElse(GENESIS);
         Long id = jdbc.queryForObject("SELECT nextval(pg_get_serial_sequence('audit_log', 'id'))", Long.class);
         Instant createdAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
+        String correlationId = MDC.get("correlationId");
         String canonical = String.join("|", id.toString(), type, actor == null ? "" : actor.getId().toString(),
-                description, ip == null ? "" : ip, status, createdAt.toString(), previous);
+                description, ip == null ? "" : ip, status, createdAt.toString(),
+                correlationId == null ? "" : correlationId, previous);
         String hash = Hashing.sha256(canonical);
         jdbc.update("""
                 INSERT INTO audit_log
-                    (id, event_type, actor_user_id, description, ip_address, status, prev_hash, entry_hash, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, event_type, actor_user_id, description, ip_address, status, prev_hash, entry_hash, created_at,
+                     correlation_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, id, type, actor == null ? null : actor.getId(), description,
-                ip, status, previous, hash, Timestamp.from(createdAt));
+                ip, status, previous, hash, Timestamp.from(createdAt), correlationId);
         return auditRepository.findById(id).orElseThrow(
                 () -> new IllegalStateException("Inserted audit event could not be loaded"));
     }

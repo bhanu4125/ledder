@@ -17,6 +17,8 @@ public class AuditEvent {
     private String description;
     @Column(name = "ip_address", length = 64)
     private String ipAddress;
+    @Column(name = "correlation_id", length = 36)
+    private String correlationId;
     @Column(nullable = false, length = 24)
     private String status;
     @Column(name = "prev_hash", nullable = false, length = 64)
@@ -37,6 +39,7 @@ public class AuditEvent {
     public String getEventType() { return eventType; }
     public String getDescription() { return description; }
     public String getIpAddress() { return ipAddress; }
+    public String getCorrelationId() { return correlationId; }
     public String getStatus() { return status; }
     public String getPrevHash() { return prevHash; }
     public String getEntryHash() { return entryHash; }

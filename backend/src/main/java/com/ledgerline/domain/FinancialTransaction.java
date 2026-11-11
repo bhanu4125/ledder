@@ -28,6 +28,8 @@ public class FinancialTransaction {
     private Instant createdAt;
     @ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "decided_by_user_id")
     private LedgerUser decidedBy;
+    @ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "reversal_of_transaction_id")
+    private FinancialTransaction reversalOf;
     @Column(name = "decided_at")
     private Instant decidedAt;
     @Column(length = 140)
@@ -36,6 +38,11 @@ public class FinancialTransaction {
     protected FinancialTransaction() {}
     public FinancialTransaction(String type, Account sender, Account receiver, BigDecimal amount,
                                 String status, String idempotencyKey, LedgerUser requestedBy, String memo) {
+        this(type, sender, receiver, amount, status, idempotencyKey, requestedBy, memo, null);
+    }
+    public FinancialTransaction(String type, Account sender, Account receiver, BigDecimal amount,
+                                String status, String idempotencyKey, LedgerUser requestedBy, String memo,
+                                FinancialTransaction reversalOf) {
         this.id = UUID.randomUUID();
         this.type = type;
         this.sender = sender;
@@ -46,6 +53,7 @@ public class FinancialTransaction {
         this.requestedBy = requestedBy;
         this.createdAt = Instant.now();
         this.memo = memo;
+        this.reversalOf = reversalOf;
     }
     public UUID getId() { return id; }
     public String getType() { return type; }
@@ -55,6 +63,7 @@ public class FinancialTransaction {
     public String getStatus() { return status; }
     public LedgerUser getRequestedBy() { return requestedBy; }
     public LedgerUser getDecidedBy() { return decidedBy; }
+    public FinancialTransaction getReversalOf() { return reversalOf; }
     public String getMemo() { return memo; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getDecidedAt() { return decidedAt; }
@@ -62,5 +71,10 @@ public class FinancialTransaction {
         this.decidedBy = actor;
         this.decidedAt = Instant.now();
         this.status = approved ? "COMPLETED" : "REJECTED";
+    }
+    public void reverse(LedgerUser actor) {
+        this.status = "REVERSED";
+        this.decidedBy = actor;
+        this.decidedAt = Instant.now();
     }
 }
