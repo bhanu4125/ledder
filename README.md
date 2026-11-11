@@ -39,6 +39,18 @@ PostgreSQL initialization creates `ledgerline_owner` (schema/migration owner) an
 
 The local Compose stack is marked `DEMO` in the UI and keeps Swagger available for exploration. For a TLS deployment, set `SPRING_PROFILES_ACTIVE=production`, terminate HTTPS at a trusted reverse proxy, set `FRONTEND_ORIGIN` to the exact HTTPS origin, use unique long database passwords and a random JWT secret, and do not expose PostgreSQL or the backend port publicly. The production profile disables Swagger/OpenAPI, suppresses verbose server errors, disables SQL logging, and enables secure refresh cookies. Do not override `SECURE_COOKIES=true` in production. The included Compose file is a local demo deployment, not a hardened public-internet deployment.
 
+## Deploy to Cloud with Render
+
+A complete Infrastructure-as-Code Blueprint is included in `render.yaml`. To deploy:
+
+1. Push your repository to GitHub.
+2. Log into [Render Dashboard](https://dashboard.render.com) and click **New +** $\rightarrow$ **Blueprint**.
+3. Connect your repository. Render automatically reads `render.yaml` and sets up:
+   - `ledgerline-db`: Managed PostgreSQL database.
+   - `ledgerline-backend`: Spring Boot Docker service with automated JDBC URL normalization, database connection, secure JWT secret generation, and production profile.
+   - `ledgerline-frontend`: Nginx + React Docker service with dynamic reverse proxy to the backend.
+4. Click **Apply**. Render handles building, HTTPS certificates, and deployment automatically.
+
 ## Demo credentials
 
 These are intentionally public, seeded demo credentials. Change/remove them before any non-demo deployment.
