@@ -5,6 +5,7 @@ import com.ledgerline.domain.LedgerUser;
 import com.ledgerline.repository.AuditEventRepository;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.sql.Timestamp;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.stereotype.Service;
@@ -30,9 +31,14 @@ public class AuditService {
         String canonical = String.join("|", id.toString(), type, actor == null ? "" : actor.getId().toString(),
                 description, ip == null ? "" : ip, status, createdAt.toString(), previous);
         String hash = Hashing.sha256(canonical);
-        AuditEvent event = new AuditEvent(type, actor, description, ip, status, previous, hash, createdAt);
-        event.assignId(id);
-        return auditRepository.save(event);
+        jdbc.update("""
+                INSERT INTO audit_log
+                    (id, event_type, actor_user_id, description, ip_address, status, prev_hash, entry_hash, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, id, type, actor == null ? null : actor.getId(), description,
+                ip, status, previous, hash, Timestamp.from(createdAt));
+        return auditRepository.findById(id).orElseThrow(
+                () -> new IllegalStateException("Inserted audit event could not be loaded"));
     }
 
     public void lock(String chain) {

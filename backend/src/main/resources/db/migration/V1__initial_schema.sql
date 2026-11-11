@@ -44,8 +44,8 @@ CREATE TABLE ledger_entries (
     entry_type VARCHAR(8) NOT NULL CHECK (entry_type IN ('DEBIT', 'CREDIT')),
     amount NUMERIC(19,2) NOT NULL CHECK (amount > 0),
     running_balance NUMERIC(19,2) NOT NULL,
-    prev_hash CHAR(64) NOT NULL,
-    entry_hash CHAR(64) NOT NULL UNIQUE,
+    prev_hash VARCHAR(64) NOT NULL,
+    entry_hash VARCHAR(64) NOT NULL UNIQUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX ix_ledger_account_created ON ledger_entries(account_id, created_at, id);
@@ -57,8 +57,8 @@ CREATE TABLE audit_log (
     description VARCHAR(500) NOT NULL,
     ip_address VARCHAR(64),
     status VARCHAR(24) NOT NULL,
-    prev_hash CHAR(64) NOT NULL,
-    entry_hash CHAR(64) NOT NULL UNIQUE,
+    prev_hash VARCHAR(64) NOT NULL,
+    entry_hash VARCHAR(64) NOT NULL UNIQUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -66,7 +66,7 @@ CREATE TABLE idempotency_keys (
     id BIGSERIAL PRIMARY KEY,
     request_key VARCHAR(100) NOT NULL,
     endpoint VARCHAR(160) NOT NULL,
-    request_hash CHAR(64) NOT NULL,
+    request_hash VARCHAR(64) NOT NULL,
     response_body TEXT NOT NULL,
     response_status INTEGER NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -76,7 +76,7 @@ CREATE TABLE idempotency_keys (
 CREATE TABLE refresh_sessions (
     id UUID PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id),
-    token_hash CHAR(64) NOT NULL UNIQUE,
+    token_hash VARCHAR(64) NOT NULL UNIQUE,
     expires_at TIMESTAMPTZ NOT NULL,
     revoked_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()

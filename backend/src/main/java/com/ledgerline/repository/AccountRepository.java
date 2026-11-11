@@ -13,6 +13,8 @@ public interface AccountRepository extends JpaRepository<Account, Long> {
     List<Account> findByOwnerIdOrderById(Long ownerId);
     Optional<Account> findByIdAndOwnerId(Long id, Long ownerId);
     Optional<Account> findBySystemTrue();
+    @Query("select a.id from Account a where a.system = true")
+    Optional<Long> findSystemId();
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select a from Account a where a.id = :id")
     Optional<Account> findLockedById(@Param("id") Long id);

@@ -10,6 +10,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.math.RoundingMode;
+import java.sql.Timestamp;
 import java.util.List;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -45,8 +46,12 @@ public class LedgerService {
         String canonical = canonical(id, account.getId(), transaction.getId(), type, amount, updated, createdAt, previous);
         LedgerEntry entry = new LedgerEntry(account, transaction, type, amount, updated,
                 previous, Hashing.sha256(canonical), createdAt);
-        entry.assignId(id);
-        ledgerEntries.saveAndFlush(entry);
+        jdbc.update("""
+                INSERT INTO ledger_entries
+                    (id, account_id, transaction_id, entry_type, amount, running_balance, prev_hash, entry_hash, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, id, account.getId(), transaction.getId(), type, amount, updated,
+                previous, entry.getEntryHash(), Timestamp.from(createdAt));
     }
 
     @Transactional(readOnly = true)

@@ -93,7 +93,7 @@ public class TransactionService {
         boolean pending = request.amount().compareTo(approvalThreshold) > 0;
         String scopedKey = userId + ":" + rawKey;
         LedgerUser actor = users.findById(userId).orElseThrow(ApiException::unauthorized);
-        FinancialTransaction transaction = transactions.save(new FinancialTransaction(
+        FinancialTransaction transaction = transactions.saveAndFlush(new FinancialTransaction(
                 request.type(), sender, receiver, request.amount(), pending ? "PENDING" : "COMPLETED",
                 scopedKey, actor, request.memo()));
         if (!pending) {
@@ -177,8 +177,7 @@ public class TransactionService {
         return account;
     }
     private Long systemAccountId() {
-        Account system = accounts.findBySystemTrue().orElseThrow(() -> new IllegalStateException("System account is missing"));
-        return system.getId();
+        return accounts.findSystemId().orElseThrow(() -> new IllegalStateException("System account is missing"));
     }
     private void active(Account account) {
         if (!"ACTIVE".equals(account.getStatus())) throw ApiException.conflict("Account is not active");
