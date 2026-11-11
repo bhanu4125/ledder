@@ -42,7 +42,7 @@ services:
         fromService:
           type: web
           name: ledgerline-frontend
-          property: url
+          property: host
 
   - type: web
     name: ledgerline-frontend
@@ -54,4 +54,4 @@ services:
         fromService:
           type: web
           name: ledgerline-backend
-          property: url
+          property: host

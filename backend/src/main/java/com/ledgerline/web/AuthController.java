@@ -26,10 +26,14 @@ public class AuthController {
     private final boolean secureCookies;
     private final int refreshDays;
 
-    public AuthController(AuthService auth, @Value("${ledgerline.frontend-origin}") String origin,
+    public AuthController(AuthService auth, @Value("${ledgerline.frontend-origin}") String rawOrigin,
                           @Value("${ledgerline.secure-cookies}") boolean secureCookies,
                           @Value("${ledgerline.jwt.refresh-days}") int refreshDays) {
-        this.auth=auth; this.origin=origin; this.secureCookies=secureCookies; this.refreshDays=refreshDays;
+        this.auth=auth;
+        this.origin = (rawOrigin != null && !rawOrigin.startsWith("http://") && !rawOrigin.startsWith("https://"))
+                ? "https://" + rawOrigin : rawOrigin;
+        this.secureCookies=secureCookies;
+        this.refreshDays=refreshDays;
     }
 
     @PostMapping("/login")

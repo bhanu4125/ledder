@@ -52,3 +52,4 @@ class DatabaseUrlNormalizerTest {
         assertNull(System.getProperty("spring.datasource.url"));
     }
 }
+

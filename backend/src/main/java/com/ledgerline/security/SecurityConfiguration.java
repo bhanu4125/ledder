@@ -56,7 +56,9 @@ public class SecurityConfiguration {
     }
 
     @Bean
-    CorsConfigurationSource corsConfigurationSource(@Value("${ledgerline.frontend-origin}") String origin) {
+    CorsConfigurationSource corsConfigurationSource(@Value("${ledgerline.frontend-origin}") String rawOrigin) {
+        String origin = (rawOrigin != null && !rawOrigin.startsWith("http://") && !rawOrigin.startsWith("https://"))
+                ? "https://" + rawOrigin : rawOrigin;
         CorsConfiguration config = new CorsConfiguration();
         config.setAllowedOrigins(List.of(origin));
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
