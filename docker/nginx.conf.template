@@ -4,13 +4,16 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
+    resolver ${RESOLVER} valid=10s ipv6=off;
+
     add_header X-Content-Type-Options nosniff always;
     add_header X-Frame-Options DENY always;
     add_header Referrer-Policy strict-origin-when-cross-origin always;
     add_header Content-Security-Policy "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'" always;
 
     location /api/ {
-        proxy_pass ${BACKEND_URL}/api/;
+        set $backend "${BACKEND_URL}";
+        proxy_pass $backend;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -19,15 +22,18 @@ server {
     }
 
     location /v3/api-docs/ {
-        proxy_pass ${BACKEND_URL}/v3/api-docs/;
+        set $backend "${BACKEND_URL}";
+        proxy_pass $backend;
         proxy_set_header Host $host;
     }
     location /swagger-ui/ {
-        proxy_pass ${BACKEND_URL}/swagger-ui/;
+        set $backend "${BACKEND_URL}";
+        proxy_pass $backend;
         proxy_set_header Host $host;
     }
     location = /swagger-ui.html {
-        proxy_pass ${BACKEND_URL}/swagger-ui.html;
+        set $backend "${BACKEND_URL}";
+        proxy_pass $backend;
         proxy_set_header Host $host;
     }
 
@@ -35,4 +41,3 @@ server {
         try_files $uri $uri/ /index.html;
     }
 }
-
