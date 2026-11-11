@@ -64,6 +64,8 @@ public class SecurityConfiguration {
         List<String> patterns = new ArrayList<>(List.of(
                 "https://*.onrender.com",
                 "http://*.onrender.com",
+                "https://*.netlify.app",
+                "http://*.netlify.app",
                 "http://localhost:*",
                 "http://127.0.0.1:*"
         ));

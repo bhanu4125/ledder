@@ -77,6 +77,7 @@ public class AuthController {
         if (Objects.equals(origin, requestOrigin)
                 || requestOrigin.equals(origin + ".onrender.com")
                 || requestOrigin.endsWith(".onrender.com")
+                || requestOrigin.endsWith(".netlify.app")
                 || requestOrigin.startsWith("http://localhost:")
                 || requestOrigin.startsWith("http://127.0.0.1:")) {
             return;
