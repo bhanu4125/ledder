@@ -1,0 +1,41 @@
+server:
+  port: ${SERVER_PORT:8080}
+  forward-headers-strategy: framework
+  servlet:
+    session:
+      cookie:
+        same-site: strict
+spring:
+  application:
+    name: ledgerline
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/ledgerline}
+    username: ${DATABASE_USERNAME:ledgerline_runtime}
+    password: ${DATABASE_PASSWORD:ledgerline-local-runtime}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+    url: ${FLYWAY_URL:${DATABASE_URL:jdbc:postgresql://localhost:5432/ledgerline}}
+    user: ${FLYWAY_USERNAME:ledgerline_owner}
+    password: ${FLYWAY_PASSWORD:owner-local-dev-only}
+  jackson:
+    default-property-inclusion: non_null
+ledgerline:
+  jwt:
+    secret: ${JWT_SECRET:dev-only-change-this-secret-before-deployment-32-bytes-minimum}
+    issuer: ledgerline
+    access-minutes: 15
+    refresh-days: 7
+  frontend-origin: ${FRONTEND_ORIGIN:http://localhost:5173}
+  secure-cookies: ${SECURE_COOKIES:false}
+  authorisation-threshold: ${AUTHORISATION_THRESHOLD:10000.00}
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
