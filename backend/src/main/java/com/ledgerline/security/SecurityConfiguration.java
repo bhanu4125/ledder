@@ -1,6 +1,7 @@
 package com.ledgerline.security;
 
 import java.util.List;
+import java.util.ArrayList;
 import java.time.Instant;
 import com.ledgerline.web.ApiModels.ErrorBody;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -60,7 +61,19 @@ public class SecurityConfiguration {
         String origin = (rawOrigin != null && !rawOrigin.startsWith("http://") && !rawOrigin.startsWith("https://"))
                 ? "https://" + rawOrigin : rawOrigin;
         CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOrigins(List.of(origin));
+        List<String> patterns = new ArrayList<>(List.of(
+                "https://*.onrender.com",
+                "http://*.onrender.com",
+                "http://localhost:*",
+                "http://127.0.0.1:*"
+        ));
+        if (origin != null && !origin.isBlank()) {
+            patterns.add(origin);
+            if (!origin.contains("*")) {
+                patterns.add(origin + "*");
+            }
+        }
+        config.setAllowedOriginPatterns(patterns);
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("Authorization", "Content-Type", "Idempotency-Key",
                 "X-Requested-With", "X-Correlation-ID"));

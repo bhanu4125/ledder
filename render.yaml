@@ -16,18 +16,6 @@ services:
         fromDatabase:
           name: ledgerline-db
           property: connectionString
-      - key: FLYWAY_URL
-        fromDatabase:
-          name: ledgerline-db
-          property: connectionString
-      - key: FLYWAY_USERNAME
-        fromDatabase:
-          name: ledgerline-db
-          property: user
-      - key: FLYWAY_PASSWORD
-        fromDatabase:
-          name: ledgerline-db
-          property: password
       - key: JWT_SECRET
         generateValue: true
       - key: APP_ENV

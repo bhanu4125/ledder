@@ -23,10 +23,27 @@ function App() {
 
   useEffect(() => {
     let active = true
-    fetch('/api/health').then((response) => response.ok ? response.json() : null)
-      .then((health) => { if (active && health?.environment) setRuntimeEnvironment(health.environment) })
-      .catch(() => { if (active) setRuntimeEnvironment('UNAVAILABLE') })
-    return () => { active = false }
+    let timer = null
+    function probeHealth() {
+      fetch('/api/health')
+        .then((response) => response.ok ? response.json() : null)
+        .then((health) => {
+          if (active && health?.environment) {
+            setRuntimeEnvironment(health.environment)
+          } else if (active) {
+            setRuntimeEnvironment('STARTING_UP')
+            timer = setTimeout(probeHealth, 3000)
+          }
+        })
+        .catch(() => {
+          if (active) {
+            setRuntimeEnvironment('STARTING_UP')
+            timer = setTimeout(probeHealth, 3000)
+          }
+        })
+    }
+    probeHealth()
+    return () => { active = false; if (timer) clearTimeout(timer) }
   }, [])
 
   const refresh = useCallback(async () => {
@@ -85,7 +102,17 @@ function App() {
         credentials: 'include',
         body: JSON.stringify({ email, password }),
       })
-      if (!response.ok) throw new Error('Email or password is incorrect. Try again.')
+      if (!response.ok) {
+        let body = {}
+        try { body = await response.json() } catch { /* Response may not be JSON */ }
+        if (response.status === 502 || response.status === 503 || response.status === 504) {
+          throw new Error('Backend service is starting up or unavailable. Please wait a moment and try again.')
+        }
+        if (response.status === 403) {
+          throw new Error(body.message || 'Access was restricted. Please try again.')
+        }
+        throw new Error(body.message || (response.status === 401 ? 'Email or password is incorrect. Try again.' : `Sign in failed (${response.status}).`))
+      }
       setSession(await response.json())
       navigate('/')
     } catch (error) {
@@ -105,8 +132,14 @@ function App() {
       })
       if (!response.ok) {
         let body = {}
-        try { body = await response.json() } catch { /* Response may be empty. */ }
-        throw new Error(body.message || 'Account registration could not be completed.')
+        try { body = await response.json() } catch { /* Response may not be JSON */ }
+        if (response.status === 502 || response.status === 503 || response.status === 504) {
+          throw new Error('Backend service is starting up or unavailable. Please wait a moment and try again.')
+        }
+        if (response.status === 403) {
+          throw new Error(body.message || 'Access was restricted or session check failed. Please try again.')
+        }
+        throw new Error(body.message || `Account registration could not be completed (${response.status}).`)
       }
       setSession(await response.json())
       navigate('/')
@@ -124,7 +157,7 @@ function App() {
 
   if (initializing) return <div className="boot-screen"><span className="brand-mark">L</span><span>Opening LedgerLine…</span></div>
   if (!session) {
-    return <LoginScreen onLogin={signIn} onRegister={signUp} error={authError} />
+    return <LoginScreen onLogin={signIn} onRegister={signUp} error={authError} runtimeEnvironment={runtimeEnvironment} />
   }
 
   const role = session.user?.role
@@ -173,7 +206,7 @@ function App() {
   )
 }
 
-function LoginScreen({ onLogin, onRegister, error }) {
+function LoginScreen({ onLogin, onRegister, error, runtimeEnvironment }) {
   const [registering, setRegistering] = useState(false)
   const [email, setEmail] = useState('holder@ledgerline.demo')
   const [password, setPassword] = useState('LedgerLine-Holder-2026!')
@@ -193,8 +226,13 @@ function LoginScreen({ onLogin, onRegister, error }) {
     <div className="login-form-side"><form className="login-card" onSubmit={submit}>
       <div className="eyebrow">{registering ? 'NEW ACCOUNT' : 'WELCOME BACK'}</div><h2>{registering ? 'Create an account' : 'Sign in to your workspace'}</h2>
       <p className="muted">{registering ? 'New accounts are created with the account-holder role.' : 'Use one of the demo roles to explore LedgerLine.'}</p>
+      {runtimeEnvironment === 'STARTING_UP' && (
+        <div className="login-hint" style={{ color: '#d97706', marginBottom: '0.75rem', background: '#fef3c7', padding: '0.5rem 0.75rem', borderRadius: '4px' }}>
+          ⏳ Connecting to backend service (cloud free-tier instances may take ~30-60s to wake up)…
+        </div>
+      )}
       <label>Email address<input type="email" autoComplete="username" required value={email} onChange={(event) => setEmail(event.target.value)} /></label>
-      <label>Password<input type="password" autoComplete={registering ? 'new-password' : 'current-password'} minLength={registering ? 12 : undefined} maxLength="72" required value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+      <label>Password{registering ? ' (min 12 chars)' : ''}<input type="password" autoComplete={registering ? 'new-password' : 'current-password'} minLength={registering ? 12 : undefined} maxLength="72" required value={password} onChange={(event) => setPassword(event.target.value)} /></label>
       {error && <div className="inline-error" role="alert">{error}</div>}
       <button className="primary-button wide-button" disabled={busy}>{busy ? 'Please wait…' : registering ? 'Create account' : 'Sign in'} <span>→</span></button>
       <button type="button" className="text-button login-toggle" onClick={() => setRegistering(!registering)}>{registering ? 'Already have a profile? Sign in' : 'New here? Create an account'}</button>

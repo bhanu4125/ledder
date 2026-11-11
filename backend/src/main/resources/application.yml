@@ -23,8 +23,8 @@ spring:
   flyway:
     enabled: true
     url: ${FLYWAY_URL:${DATABASE_URL:jdbc:postgresql://localhost:5432/ledgerline}}
-    user: ${FLYWAY_USERNAME:ledgerline_owner}
-    password: ${FLYWAY_PASSWORD:owner-local-dev-only}
+    user: ${FLYWAY_USERNAME:${DATABASE_USERNAME:ledgerline_owner}}
+    password: ${FLYWAY_PASSWORD:${DATABASE_PASSWORD:owner-local-dev-only}}
   jackson:
     default-property-inclusion: non_null
 ledgerline:

@@ -71,7 +71,17 @@ public class AuthController {
     }
 
     private void requireSameOrigin(String requestOrigin) {
-        if (!Objects.equals(origin, requestOrigin)) throw ApiException.forbidden();
+        if (requestOrigin == null || requestOrigin.isBlank()) {
+            return;
+        }
+        if (Objects.equals(origin, requestOrigin)
+                || requestOrigin.equals(origin + ".onrender.com")
+                || requestOrigin.endsWith(".onrender.com")
+                || requestOrigin.startsWith("http://localhost:")
+                || requestOrigin.startsWith("http://127.0.0.1:")) {
+            return;
+        }
+        throw ApiException.forbidden();
     }
     private ResponseCookie refreshCookie(String value) {
         return ResponseCookie.from(COOKIE_NAME, value).httpOnly(true).secure(secureCookies)
