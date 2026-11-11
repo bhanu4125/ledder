@@ -1,0 +1,50 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ledgerline
+      POSTGRES_USER: ledgerline_owner
+      POSTGRES_PASSWORD: ${DATABASE_OWNER_PASSWORD:-owner-local-dev-only}
+      LEDGERLINE_RUNTIME_PASSWORD: ${DATABASE_PASSWORD:-ledgerline-local-runtime}
+    volumes:
+      - ledgerline-db:/var/lib/postgresql/data
+      - ./docker/postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ledgerline_owner -d ledgerline"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    environment:
+      DATABASE_URL: jdbc:postgresql://db:5432/ledgerline
+      DATABASE_USERNAME: ledgerline_runtime
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-ledgerline-local-runtime}
+      FLYWAY_URL: jdbc:postgresql://db:5432/ledgerline
+      FLYWAY_USERNAME: ledgerline_owner
+      FLYWAY_PASSWORD: ${DATABASE_OWNER_PASSWORD:-owner-local-dev-only}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost}
+      SECURE_COOKIES: ${SECURE_COOKIES:-false}
+      AUTHORISATION_THRESHOLD: ${AUTHORISATION_THRESHOLD:-10000.00}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  ledgerline-db:
